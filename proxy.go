@@ -2,6 +2,7 @@ package goproxy
 
 import (
 	"bufio"
+	"crypto/tls"
 	"io"
 	"log"
 	"net"
@@ -174,4 +175,9 @@ func NewProxyHttpServer() *ProxyHttpServer {
 	proxy.ConnectDial = dialerFromEnv(&proxy)
 
 	return &proxy
+}
+
+func SetDefaultTlsConfig(config *tls.Config) {
+	defaultTLSConfig = config
+	tlsClientSkipVerify = config
 }
