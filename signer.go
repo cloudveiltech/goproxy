@@ -45,7 +45,6 @@ func signHost(ca tls.Certificate, hosts []string) (cert tls.Certificate, err err
 		cachedCert, ok := hostMap[hosts[0]]
 
 		if ok {
-			log.Printf("Found cached cert for %s", hosts[0])
 			cert = cachedCert
 			return
 		}
