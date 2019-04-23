@@ -34,7 +34,7 @@ func hashSortedBigInt(lst []string) *big.Int {
 var goproxySignerVersion = ":goroxy1"
 var hostMap map[string]tls.Certificate
 
-func signHost(ca tls.Certificate, hosts []string) (cert tls.Certificate, err error) {
+func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err error) {
 	var x509ca *x509.Certificate
 
 	// FIXME: There is a bug here. If hosts[] is ever more than one element long, there will be potential for host mismatches.
@@ -98,6 +98,7 @@ func signHost(ca tls.Certificate, hosts []string) (cert tls.Certificate, err err
 	if derBytes, err = x509.CreateCertificate(&csprng, &template, x509ca, &certpriv.PublicKey, ca.PrivateKey); err != nil {
 		return
 	}
+
 	tlsCert := tls.Certificate{
 		Certificate: [][]byte{derBytes, ca.Certificate[0]},
 		PrivateKey:  certpriv,
