@@ -21,7 +21,7 @@ type ProxyHttpServer struct {
 	KeepDestinationHeaders bool
 	// setting Verbose to true will log information on each request sent to the proxy
 	Verbose         bool
-	Logger          Logger
+	Logger          *log.Logger
 	NonproxyHandler http.Handler
 	//CloudVeil start
 	WebSocketHandler http.Handler
@@ -33,7 +33,6 @@ type ProxyHttpServer struct {
 	// ConnectDial will be used to create TCP connections for CONNECT requests
 	// if nil Tr.Dial will be used
 	ConnectDial func(network string, addr string) (net.Conn, error)
-	CertStore   CertStorage
 }
 
 var hasPort = regexp.MustCompile(`:\d+$`)
