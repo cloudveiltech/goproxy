@@ -32,7 +32,7 @@ func hashSortedBigInt(lst []string) *big.Int {
 }
 
 var goproxySignerVersion = ":goroxy1"
-var hostMap map[string]tls.Certificate
+var hostMap map[string]*tls.Certificate
 
 func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err error) {
 	var x509ca *x509.Certificate
@@ -99,14 +99,14 @@ func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err er
 		return
 	}
 
-	tlsCert := tls.Certificate{
+	tlsCert := &tls.Certificate{
 		Certificate: [][]byte{derBytes, ca.Certificate[0]},
 		PrivateKey:  certpriv,
 	}
 
 	// Cache the certificate for later.
 	if hostMap == nil {
-		hostMap = make(map[string]tls.Certificate)
+		hostMap = make(map[string]*tls.Certificate)
 	}
 
 	if hostMap != nil {
