@@ -33,23 +33,21 @@ func hashSortedBigInt(lst []string) *big.Int {
 }
 
 var goproxySignerVersion = ":goroxy1"
-var hostMap sync.Map{} //map[string]*tls.Certificate
+var hostMap sync.Map //map[string]*tls.Certificate
 
 func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err error) {
 	var x509ca *x509.Certificate
 
 	// FIXME: There is a bug here. If hosts[] is ever more than one element long, there will be potential for host mismatches.
-	if hostMap != nil {
-		if len(hosts) == 0 {
-			return
-		}
+	if len(hosts) == 0 {
+		return
+	}
 
-		cachedCert, ok := hostMap[hosts[0]].(*tls.Certificate)
+	cachedCert, ok := hostMap.Load(hosts[0])
 
-		if ok {
-			cert = cachedCert
-			return
-		}
+	if ok {
+		cert = cachedCert.(*tls.Certificate)
+		return
 	}
 
 	// Use the provided ca and not the global GoproxyCa for certificate generation.
@@ -106,14 +104,8 @@ func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err er
 	}
 
 	// Cache the certificate for later.
-	if hostMap == nil {
-		hostMap = sync.Map{}
-	}
-
-	if hostMap != nil {
-		for _, h := range hosts {
-			hostMap.Store(h, tlsCert)
-		}
+	for _, h := range hosts {
+		hostMap.Store(h, tlsCert)
 	}
 
 	return tlsCert, nil
