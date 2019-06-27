@@ -12,7 +12,7 @@ import (
 	"runtime"
 	"sort"
 	"time"
-	"syncmap"
+	"sync"
 )
 
 func hashSorted(lst []string) []byte {
@@ -33,7 +33,7 @@ func hashSortedBigInt(lst []string) *big.Int {
 }
 
 var goproxySignerVersion = ":goroxy1"
-var hostMap syncmap.Map{} //map[string]*tls.Certificate
+var hostMap sync.Map{} //map[string]*tls.Certificate
 
 func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err error) {
 	var x509ca *x509.Certificate
@@ -107,7 +107,7 @@ func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err er
 
 	// Cache the certificate for later.
 	if hostMap == nil {
-		hostMap = syncmap.Map{}
+		hostMap = sync.Map{}
 	}
 
 	if hostMap != nil {
