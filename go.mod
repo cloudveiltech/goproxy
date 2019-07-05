@@ -1,3 +1,3 @@
-module github.com/elazarl/goproxy
+module github.com/cloudveiltech/goproxy
 
 go 1.12
