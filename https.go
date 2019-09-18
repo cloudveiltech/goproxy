@@ -200,7 +200,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				}
 				req.RemoteAddr = r.RemoteAddr // since we're converting the request, need to carry over the original connecting IP as well
 				ctx.Logf("req %v", req.Host)
-				
+
 				if !httpsRegexp.MatchString(req.URL.String()) {
 					req.URL, err = url.Parse("https://" + req.Host + req.URL.String())
 				}
@@ -208,7 +208,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				// Bug fix which goproxy fails to provide request
 				// information URL in the context when does HTTPS MITM
 				ctx.Req = req
-				
+
 				req, resp := proxy.filterRequest(req, ctx)
 				if resp == nil {
 					//CloudVeil start
@@ -253,30 +253,29 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 
 				resp.Header.Set("Connection", "close")
 				if err := resp.Header.Write(rawClientTls); err != nil {
-					ctx.Warnf("Cannot write TLS response header from mitm'd client: %v", err)
+					ctx.Warnf("Cannot write TLS response header from mitm'd client 1: %v", err)
 					return
 				}
 				if _, err = io.WriteString(rawClientTls, "\r\n"); err != nil {
-					ctx.Warnf("Cannot write TLS response header end from mitm'd client: %v", err)
+					ctx.Warnf("Cannot write TLS response header end from mitm'd client 2: %v", err)
 					return
 				}
 
 				chunked := newChunkedWriter(rawClientTls)
 
 				if _, err := io.Copy(chunked, resp.Body); err != nil {
-					ctx.Warnf("Cannot write TLS response body from mitm'd client: %v", err)
-					return
+					ctx.Warnf("Cannot write TLS response body from mitm'd client 3: %v", err)
+				//	return
 				}
 				if err := chunked.Close(); err != nil {
-					ctx.Warnf("Cannot write TLS chunked EOF from mitm'd client: %v", err)
+					ctx.Warnf("Cannot write TLS chunked EOF from mitm'd client 4: %v", err)
 					return
 				}
 				if _, err = io.WriteString(rawClientTls, "\r\n"); err != nil {
-					ctx.Warnf("Cannot write TLS response chunked trailer from mitm'd client: %v", err)
+					ctx.Warnf("Cannot write TLS response chunked trailer from mitm'd client 5: %v", err)
 					return
 				}
 			}
-			ctx.Logf("Exiting on EOF")
 		}()
 	case ConnectProxyAuthHijack:
 		proxyClient.Write([]byte("HTTP/1.1 407 Proxy Authentication Required\r\n"))
