@@ -1,18 +1,21 @@
 package goproxy
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/rsa"
 	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"fmt"
 	"math/big"
+	"math/rand"
 	"net"
 	"runtime"
 	"sort"
 	"time"
-	"sync"
 )
 
 func hashSorted(lst []string) []byte {
@@ -33,22 +36,9 @@ func hashSortedBigInt(lst []string) *big.Int {
 }
 
 var goproxySignerVersion = ":goroxy1"
-var hostMap sync.Map //map[string]*tls.Certificate
 
 func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err error) {
 	var x509ca *x509.Certificate
-
-	// FIXME: There is a bug here. If hosts[] is ever more than one element long, there will be potential for host mismatches.
-	if len(hosts) == 0 {
-		return
-	}
-
-	cachedCert, ok := hostMap.Load(hosts[0])
-
-	if ok {
-		cert = cachedCert.(*tls.Certificate)
-		return
-	}
 
 	// Use the provided ca and not the global GoproxyCa for certificate generation.
 	if x509ca, err = x509.ParseCertificate(ca.Certificate[0]); err != nil {
@@ -59,9 +49,8 @@ func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err er
 	if err != nil {
 		panic(err)
 	}
-	hash := hashSorted(append(hosts, goproxySignerVersion, ":"+runtime.Version()))
-	serial := new(big.Int)
-	serial.SetBytes(hash)
+
+	serial := big.NewInt(rand.Int63())
 	template := x509.Certificate{
 		// TODO(elazar): instead of this ugly hack, just encode the certificate and hash the binary form.
 		SerialNumber: serial,
@@ -84,29 +73,38 @@ func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err er
 			template.Subject.CommonName = h
 		}
 	}
+
+	hash := hashSorted(append(hosts, goproxySignerVersion, ":"+runtime.Version()))
 	var csprng CounterEncryptorRand
 	if csprng, err = NewCounterEncryptorRandFromKey(ca.PrivateKey, hash); err != nil {
 		return
 	}
 
-	var certpriv *ecdsa.PrivateKey
-	if certpriv, err = ecdsa.GenerateKey(elliptic.P384(), &csprng); err != nil {
-		return
-	}
-	var derBytes []byte
-	if derBytes, err = x509.CreateCertificate(&csprng, &template, x509ca, &certpriv.PublicKey, ca.PrivateKey); err != nil {
-		return
+	var certpriv crypto.Signer
+	switch ca.PrivateKey.(type) {
+	case *rsa.PrivateKey:
+		if certpriv, err = rsa.GenerateKey(&csprng, 2048); err != nil {
+			return
+		}
+	case *ecdsa.PrivateKey:
+		if certpriv, err = ecdsa.GenerateKey(elliptic.P256(), &csprng); err != nil {
+			return
+		}
+	default:
+		err = fmt.Errorf("unsupported key type %T", ca.PrivateKey)
 	}
 
-	tlsCert := &tls.Certificate{
+	var derBytes []byte
+	if derBytes, err = x509.CreateCertificate(&csprng, &template, x509ca, certpriv.Public(), ca.PrivateKey); err != nil {
+		return
+	}
+	return &tls.Certificate{
 		Certificate: [][]byte{derBytes, ca.Certificate[0]},
 		PrivateKey:  certpriv,
-	}
+	}, nil
+}
 
-	// Cache the certificate for later.
-	for _, h := range hosts {
-		hostMap.Store(h, tlsCert)
-	}
-
-	return tlsCert, nil
+func init() {
+	// Avoid deterministic random numbers
+	rand.Seed(time.Now().UnixNano())
 }

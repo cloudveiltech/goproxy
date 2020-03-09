@@ -2,7 +2,6 @@ package goproxy
 
 import (
 	"bufio"
-	"crypto/tls"
 	"io"
 	"log"
 	"net"
@@ -23,13 +22,10 @@ type ProxyHttpServer struct {
 	Verbose         bool
 	Logger          Logger
 	NonproxyHandler http.Handler
-	//CloudVeil start
-	WebSocketHandler http.Handler
-	//CloudVeil end
-	reqHandlers   []ReqHandler
-	respHandlers  []RespHandler
-	httpsHandlers []HttpsHandler
-	Tr            *http.Transport
+	reqHandlers     []ReqHandler
+	respHandlers    []RespHandler
+	httpsHandlers   []HttpsHandler
+	Tr              *http.Transport
 	// ConnectDial will be used to create TCP connections for CONNECT requests
 	// if nil Tr.Dial will be used
 	ConnectDial func(network string, addr string) (net.Conn, error)
@@ -81,23 +77,7 @@ func (proxy *ProxyHttpServer) filterResponse(respOrig *http.Response, ctx *Proxy
 }
 
 func removeProxyHeaders(ctx *ProxyCtx, r *http.Request) {
-	r.RequestURI = "" // this must be reset when serving a request with the client
-	ctx.Logf("Sending request %v %v", r.Method, r.URL.String())
-	// If no Accept-Encoding header exists, Transport will add the headers it can accept
-	// and would wrap the response body with the relevant reader.
-	r.Header.Del("Accept-Encoding")
-	// curl can add that, see
-	// https://jdebp.eu./FGA/web-proxy-connection-header.html
-	r.Header.Del("Proxy-Connection")
-	r.Header.Del("Proxy-Authenticate")
-	r.Header.Del("Proxy-Authorization")
-	// Connection, Authenticate and Authorization are single hop Header:
-	// http://www.w3.org/Protocols/rfc2616/rfc2616.txt
-	// 14.10 Connection
-	//   The Connection general-header field allows the sender to specify
-	//   options that are desired for that particular connection and MUST NOT
-	//   be communicated by proxies over further connections.
-	r.Header.Del("Connection")
+	r.RequestURI = ""
 }
 
 // Standard net/http function. Shouldn't be used directly, http.Serve will use it.
@@ -114,32 +94,41 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			proxy.NonproxyHandler.ServeHTTP(w, r)
 			return
 		}
-
 		r, resp := proxy.filterRequest(r, ctx)
 
 		if resp == nil {
-			//CloudVeil start
-			if r.Header.Get("Upgrade") != "" {
-				proxy.WebSocketHandler.ServeHTTP(w, r)
-				return
+			if isWebSocketRequest(r) {
+				ctx.Logf("Request looks like websocket upgrade.")
+				proxy.serveWebsocket(ctx, w, r)
 			}
-			//CloudVeil end
 
 			removeProxyHeaders(ctx, r)
 			resp, err = ctx.RoundTrip(r)
 			if err != nil {
 				ctx.Error = err
 				resp = proxy.filterResponse(nil, ctx)
-				if resp == nil {
-					ctx.Logf("error read response %v %v:", r.URL.Host, err.Error())
-					http.Error(w, err.Error(), 500)
-					return
-				}
+
 			}
-			ctx.Logf("Received response %v", resp.Status)
+			if resp != nil {
+				ctx.Logf("Received response %v", resp.Status)
+			}
+		}
+		resp = proxy.filterResponse(resp, ctx)
+
+		if resp == nil {
+			var errorString string
+			if ctx.Error != nil {
+				errorString = "error read response " + r.URL.Host + " : " + ctx.Error.Error()
+				ctx.Logf(errorString)
+				http.Error(w, ctx.Error.Error(), 500)
+			} else {
+				errorString = "error read response " + r.URL.Host
+				ctx.Logf(errorString)
+				http.Error(w, errorString, 500)
+			}
+			return
 		}
 		origBody := resp.Body
-		resp = proxy.filterResponse(resp, ctx)
 		defer origBody.Close()
 		ctx.Logf("Copying response to client %v [%d]", resp.Status, resp.StatusCode)
 		// http.ResponseWriter will take care of filling the correct response length
@@ -176,9 +165,4 @@ func NewProxyHttpServer() *ProxyHttpServer {
 	proxy.ConnectDial = dialerFromEnv(&proxy)
 
 	return &proxy
-}
-
-func SetDefaultTlsConfig(config *tls.Config) {
-	defaultTLSConfig = config
-	tlsClientSkipVerify = config
 }

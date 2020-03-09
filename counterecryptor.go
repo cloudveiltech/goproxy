@@ -23,12 +23,11 @@ func NewCounterEncryptorRandFromKey(key interface{}, seed []byte) (r CounterEncr
 	case *rsa.PrivateKey:
 		keyBytes = x509.MarshalPKCS1PrivateKey(key)
 	case *ecdsa.PrivateKey:
-		keyBytes, err = x509.MarshalECPrivateKey(key)
-		if err != nil {
+		if keyBytes, err = x509.MarshalECPrivateKey(key); err != nil {
 			return
 		}
 	default:
-		err = errors.New("only RSA keys supported")
+		err = errors.New("only RSA and ECDSA keys supported")
 		return
 	}
 	h := sha256.New()

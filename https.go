@@ -2,7 +2,6 @@ package goproxy
 
 import (
 	"bufio"
-	"bytes"
 	"crypto/tls"
 	"errors"
 	"io"
@@ -65,6 +64,14 @@ func (proxy *ProxyHttpServer) connectDial(network, addr string) (c net.Conn, err
 	return proxy.ConnectDial(network, addr)
 }
 
+type halfClosable interface {
+	net.Conn
+	CloseWrite() error
+	CloseRead() error
+}
+
+var _ halfClosable = (*net.TCPConn)(nil)
+
 func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request) {
 	ctx := &ProxyCtx{Req: r, Session: atomic.AddInt64(&proxy.sess, 1), proxy: proxy, certStore: proxy.CertStore}
 
@@ -103,8 +110,8 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 		ctx.Logf("Accepting CONNECT to %s", host)
 		proxyClient.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
 
-		targetTCP, targetOK := targetSiteCon.(*net.TCPConn)
-		proxyClientTCP, clientOK := proxyClient.(*net.TCPConn)
+		targetTCP, targetOK := targetSiteCon.(halfClosable)
+		proxyClientTCP, clientOK := proxyClient.(halfClosable)
 		if targetOK && clientOK {
 			go copyAndClose(ctx, targetTCP, proxyClientTCP)
 			go copyAndClose(ctx, proxyClientTCP, targetTCP)
@@ -185,9 +192,8 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				ctx.Warnf("Cannot handshake client %v %v", r.Host, err)
 				return
 			}
-
+			defer rawClientTls.Close()
 			clientTlsReader := bufio.NewReader(rawClientTls)
-
 			for !isEof(clientTlsReader) {
 				req, err := http.ReadRequest(clientTlsReader)
 				var ctx = &ProxyCtx{Req: req, Session: atomic.AddInt64(&proxy.sess, 1), proxy: proxy, UserData: ctx.UserData}
@@ -199,10 +205,11 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 					return
 				}
 				req.RemoteAddr = r.RemoteAddr // since we're converting the request, need to carry over the original connecting IP as well
-				ctx.Logf("req %v", req.Host)
+
+				ctx.Logf("req %v", r.Host)
 
 				if !httpsRegexp.MatchString(req.URL.String()) {
-					req.URL, err = url.Parse("https://" + req.Host + req.URL.String())
+					req.URL, err = url.Parse("https://" + r.Host + req.URL.String())
 				}
 
 				// Bug fix which goproxy fails to provide request
@@ -211,15 +218,11 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 
 				req, resp := proxy.filterRequest(req, ctx)
 				if resp == nil {
-					//CloudVeil start
-					if req.Header.Get("Upgrade") != "" {
-						proxy.WebSocketHandler.ServeHTTP(dumbResponseWriter{rawClientTls}, req)
+					if isWebSocketRequest(req) {
+						ctx.Logf("Request looks like websocket upgrade.")
+						proxy.serveWebsocketTLS(ctx, w, req, tlsConfig, rawClientTls)
 						return
-					} else {
-						defer rawClientTls.Close()
 					}
-					//CloudVeil end
-
 					if err != nil {
 						ctx.Warnf("Illegal URL %s", "https://"+r.Host+req.URL.Path)
 						return
@@ -250,32 +253,30 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				resp.Header.Del("Content-Length")
 				resp.Header.Set("Transfer-Encoding", "chunked")
 				// Force connection close otherwise chrome will keep CONNECT tunnel open forever
-
-				resp.Header.Set("Connection", "close")
+				//resp.Header.Set("Connection", "close")
 				if err := resp.Header.Write(rawClientTls); err != nil {
-					ctx.Warnf("Cannot write TLS response header from mitm'd client 1: %v", err)
+					ctx.Warnf("Cannot write TLS response header from mitm'd client: %v", err)
 					return
 				}
 				if _, err = io.WriteString(rawClientTls, "\r\n"); err != nil {
-					ctx.Warnf("Cannot write TLS response header end from mitm'd client 2: %v", err)
+					ctx.Warnf("Cannot write TLS response header end from mitm'd client: %v", err)
 					return
 				}
-
 				chunked := newChunkedWriter(rawClientTls)
-
 				if _, err := io.Copy(chunked, resp.Body); err != nil {
-					ctx.Warnf("Cannot write TLS response body from mitm'd client 3: %v", err)
-				//	return
+					ctx.Warnf("Cannot write TLS response body from mitm'd client: %v", err)
+					return
 				}
 				if err := chunked.Close(); err != nil {
-					ctx.Warnf("Cannot write TLS chunked EOF from mitm'd client 4: %v", err)
+					ctx.Warnf("Cannot write TLS chunked EOF from mitm'd client: %v", err)
 					return
 				}
 				if _, err = io.WriteString(rawClientTls, "\r\n"); err != nil {
-					ctx.Warnf("Cannot write TLS response chunked trailer from mitm'd client 5: %v", err)
+					ctx.Warnf("Cannot write TLS response chunked trailer from mitm'd client: %v", err)
 					return
 				}
 			}
+			ctx.Logf("Exiting on EOF")
 		}()
 	case ConnectProxyAuthHijack:
 		proxyClient.Write([]byte("HTTP/1.1 407 Proxy Authentication Required\r\n"))
@@ -289,33 +290,6 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 		proxyClient.Close()
 	}
 }
-
-//CloudVeil start
-type dumbResponseWriter struct {
-	net.Conn
-}
-
-func (dumb dumbResponseWriter) Header() http.Header {
-	//	panic("Header() should not be called on this ResponseWriter")
-	return make(http.Header)
-}
-
-func (dumb dumbResponseWriter) Write(buf []byte) (int, error) {
-	if bytes.Equal(buf, []byte("HTTP/1.0 200 OK\r\n\r\n")) {
-		return len(buf), nil // throw away the HTTP OK response from the faux CONNECT request
-	}
-	return dumb.Conn.Write(buf)
-}
-
-func (dumb dumbResponseWriter) WriteHeader(code int) {
-	//	panic("WriteHeader() should not be called on this ResponseWriter")
-}
-
-func (dumb dumbResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return dumb, bufio.NewReadWriter(bufio.NewReader(dumb), bufio.NewWriter(dumb)), nil
-}
-
-//CloudVeil end
 
 func httpError(w io.WriteCloser, ctx *ProxyCtx, err error) {
 	if _, err := io.WriteString(w, "HTTP/1.1 502 Bad Gateway\r\n\r\n"); err != nil {
@@ -333,7 +307,7 @@ func copyOrWarn(ctx *ProxyCtx, dst io.Writer, src io.Reader, wg *sync.WaitGroup)
 	wg.Done()
 }
 
-func copyAndClose(ctx *ProxyCtx, dst, src *net.TCPConn) {
+func copyAndClose(ctx *ProxyCtx, dst, src halfClosable) {
 	if _, err := io.Copy(dst, src); err != nil {
 		ctx.Warnf("Error copying to client: %s", err)
 	}
@@ -402,7 +376,7 @@ func (proxy *ProxyHttpServer) NewConnectDialToProxyWithHandler(https_proxy strin
 			return c, nil
 		}
 	}
-	if u.Scheme == "https" {
+	if u.Scheme == "https" || u.Scheme == "wss" {
 		if strings.IndexRune(u.Host, ':') == -1 {
 			u.Host += ":443"
 		}
