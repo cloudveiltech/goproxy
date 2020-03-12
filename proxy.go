@@ -2,6 +2,7 @@ package goproxy
 
 import (
 	"bufio"
+	"crypto/tls"
 	"io"
 	"log"
 	"net"
@@ -22,6 +23,7 @@ type ProxyHttpServer struct {
 	Verbose         bool
 	Logger          Logger
 	NonproxyHandler http.Handler
+	Http2Handler    func(r *http.Request, rawClientTls *tls.Conn, remote *tls.Conn) bool
 	reqHandlers     []ReqHandler
 	respHandlers    []RespHandler
 	httpsHandlers   []HttpsHandler
@@ -53,6 +55,14 @@ func isEof(r *bufio.Reader) bool {
 		return true
 	}
 	return false
+}
+
+func (proxy *ProxyHttpServer) FilterRequest(r *http.Request, ctx *ProxyCtx) (req *http.Request, resp *http.Response) {
+	return proxy.filterRequest(r, ctx)
+}
+
+func (proxy *ProxyHttpServer) FilterResponse(respOrig *http.Response, ctx *ProxyCtx) (resp *http.Response) {
+	return proxy.filterResponse(respOrig, ctx)
 }
 
 func (proxy *ProxyHttpServer) filterRequest(r *http.Request, ctx *ProxyCtx) (req *http.Request, resp *http.Response) {

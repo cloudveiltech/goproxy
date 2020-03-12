@@ -19,6 +19,7 @@ var tlsClientSkipVerify = &tls.Config{InsecureSkipVerify: true}
 
 var defaultTLSConfig = &tls.Config{
 	InsecureSkipVerify: true,
+	NextProtos:         []string{"http/1.1", "h2"},
 }
 
 var CA_CERT = []byte(`-----BEGIN CERTIFICATE-----

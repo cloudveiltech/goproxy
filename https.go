@@ -185,17 +185,44 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				return
 			}
 		}
+
 		go func() {
 			//TODO: cache connections to the remote website
+
+			tlsConfig.NextProtos = []string{"h2", "http/1.1"}
+			remote, err := tls.Dial("tcp", r.Host, tlsConfig)
+			if err != nil {
+				return
+			}
+			if remote.ConnectionState().NegotiatedProtocol != "h2" {
+				tlsConfig.NextProtos = []string{"http/1.1"}
+			} else {
+				tlsConfig.NextProtos = []string{"h2", "http/1.1"}
+			}
 			rawClientTls := tls.Server(proxyClient, tlsConfig)
 			if err := rawClientTls.Handshake(); err != nil {
 				ctx.Warnf("Cannot handshake client %v %v", r.Host, err)
 				return
 			}
+
+			if rawClientTls.ConnectionState().NegotiatedProtocol == "h2" {
+				if proxy.Http2Handler != nil {
+					if proxy.Http2Handler(r, rawClientTls, remote) {
+						return
+					} else {
+						ctx.Warnf("Fail negotiate http2, switching to http/1.1")
+					}
+				}
+			} else {
+				ctx.Warnf("Fail negotiate http2, switching to http/1.1")
+			}
+			remote.Close()
+
 			defer rawClientTls.Close()
 			clientTlsReader := bufio.NewReader(rawClientTls)
 			for !isEof(clientTlsReader) {
 				req, err := http.ReadRequest(clientTlsReader)
+
 				var ctx = &ProxyCtx{Req: req, Session: atomic.AddInt64(&proxy.sess, 1), proxy: proxy, UserData: ctx.UserData}
 				if err != nil && err != io.EOF {
 					return
@@ -204,17 +231,15 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 					ctx.Warnf("Cannot read TLS request from mitm'd client %v %v", r.Host, err)
 					return
 				}
-				req.RemoteAddr = r.RemoteAddr // since we're converting the request, need to carry over the original connecting IP as well
-
 				ctx.Logf("req %v", r.Host)
 
 				if !httpsRegexp.MatchString(req.URL.String()) {
 					req.URL, err = url.Parse("https://" + r.Host + req.URL.String())
 				}
-
 				// Bug fix which goproxy fails to provide request
 				// information URL in the context when does HTTPS MITM
 				ctx.Req = req
+				req.RemoteAddr = r.RemoteAddr // since we're converting the request, need to carry over the original connecting IP as well
 
 				req, resp := proxy.filterRequest(req, ctx)
 				if resp == nil {
@@ -239,6 +264,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				defer resp.Body.Close()
 
 				text := resp.Status
+
 				statusCode := strconv.Itoa(resp.StatusCode) + " "
 				if strings.HasPrefix(text, statusCode) {
 					text = text[len(statusCode):]
@@ -253,7 +279,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				resp.Header.Del("Content-Length")
 				resp.Header.Set("Transfer-Encoding", "chunked")
 				// Force connection close otherwise chrome will keep CONNECT tunnel open forever
-				//resp.Header.Set("Connection", "close")
+				resp.Header.Set("Connection", "close")
 				if err := resp.Header.Write(rawClientTls); err != nil {
 					ctx.Warnf("Cannot write TLS response header from mitm'd client: %v", err)
 					return
