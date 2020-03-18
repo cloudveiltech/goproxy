@@ -215,6 +215,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				}
 			} else {
 				ctx.Warnf("Fail negotiate http2, switching to http/1.1")
+				tlsConfig.NextProtos = []string{"http/1.1"}
 			}
 			remote.Close()
 
