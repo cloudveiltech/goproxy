@@ -188,7 +188,8 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 
 		go func() {
 			//TODO: cache connections to the remote website
-			tlsConfig.MinVersion = tls.VersionTLS10
+			tlsConfig.CurvePreferences = []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256}
+			tlsConfig.PreferServerCipherSuites = true
 			tlsConfig.NextProtos = []string{"h2", "http/1.1"}
 			remote, err := tls.Dial("tcp", r.Host, tlsConfig)
 			if err != nil {
