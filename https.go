@@ -188,8 +188,8 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 
 		go func() {
 			//TODO: cache connections to the remote website
-			tlsConfig.CurvePreferences = []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256}
 			tlsConfig.PreferServerCipherSuites = true
+			tlsConfig.Renegotiation = tls.RenegotiateFreelyAsClient
 			tlsConfig.NextProtos = []string{"h2", "http/1.1"}
 			remote, err := tls.Dial("tcp", r.Host, tlsConfig)
 			if err != nil {
@@ -218,7 +218,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				ctx.Warnf("Fail negotiate http2, switching to http/1.1")
 				tlsConfig.NextProtos = []string{"http/1.1"}
 			}
-			remote.Close()
+			//remote.Close()
 
 			defer rawClientTls.Close()
 			clientTlsReader := bufio.NewReader(rawClientTls)
@@ -256,7 +256,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 						ctx.Warnf("Illegal URL %s", "https://"+r.Host+req.URL.Path)
 						return
 					}
-					removeProxyHeaders(ctx, req)
+					//	removeProxyHeaders(ctx, req)
 					resp, err = ctx.RoundTrip(req)
 					if err != nil {
 						ctx.Warnf("Cannot read TLS response from mitm'd server %v", err)
