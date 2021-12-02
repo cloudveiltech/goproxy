@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"crypto/tls"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 func headerContains(header http.Header, name string, value string) bool {
@@ -47,34 +50,82 @@ func (proxy *ProxyHttpServer) serveWebsocketTLS(ctx *ProxyCtx, w http.ResponseWr
 }
 
 func (proxy *ProxyHttpServer) serveWebsocket(ctx *ProxyCtx, w http.ResponseWriter, req *http.Request) {
-	targetURL := url.URL{Scheme: "ws", Host: req.URL.Host, Path: req.URL.Path}
-
-	targetConn, err := proxy.connectDial("tcp", targetURL.Host)
-	if err != nil {
-		ctx.Warnf("Error dialing target site: %v", err)
-		return
-	}
-	defer targetConn.Close()
-
-	// Connect to Client
-	hj, ok := w.(http.Hijacker)
+	h, ok := w.(http.Hijacker)
 	if !ok {
-		panic("httpserver does not support hijacking")
+		return
 	}
-	clientConn, _, err := hj.Hijack()
+
+	client, _, err := h.Hijack()
 	if err != nil {
-		ctx.Warnf("Hijack error: %v", err)
+		log.Printf("Websocket error Hijack %s", err)
 		return
 	}
 
-	// Perform handshake
-	if err := proxy.websocketHandshake(ctx, req, targetConn, clientConn); err != nil {
-		ctx.Warnf("Websocket handshake error: %v", err)
-		return
+	remote := dialRemote(req)
+
+	defer remote.Close()
+	defer client.Close()
+
+	log.Printf("Got websocket request %s %s", req.Host, req.URL)
+
+	req.Write(remote)
+	go func() {
+		for {
+			n, err := io.Copy(remote, client)
+			if err != nil {
+				log.Printf("Websocket error request %s", err)
+				return
+			}
+			if n == 0 {
+				log.Printf("Websocket nothing requested close")
+				return
+			}
+			time.Sleep(time.Millisecond) //reduce CPU usage due to infinite nonblocking loop
+		}
+	}()
+
+	for {
+		n, err := io.Copy(client, remote)
+		if err != nil {
+			log.Printf("Websocket error response %s", err)
+			return
+		}
+		if n == 0 {
+			log.Printf("Websocket nothing responded close")
+			return
+		}
+		time.Sleep(time.Millisecond) //reduce CPU usage due to infinite nonblocking loop
+	}
+}
+
+func dialRemote(req *http.Request) net.Conn {
+	port := ""
+	if !strings.Contains(req.URL.Host, ":") {
+		if req.URL.Scheme == "https" {
+			port = ":443"
+		} else {
+			port = ":80"
+		}
 	}
 
-	// Proxy ws connection
-	proxy.proxyWebsocket(ctx, targetConn, clientConn)
+	if req.URL.Scheme == "https" {
+		conf := tls.Config{
+			//InsecureSkipVerify: true,
+		}
+		remote, err := tls.Dial("tcp", req.URL.Host+port, &conf)
+		if err != nil {
+			log.Printf("Websocket error connect %s", err)
+			return nil
+		}
+		return remote
+	} else {
+		remote, err := net.Dial("tcp", req.URL.Host+port)
+		if err != nil {
+			log.Printf("Websocket error connect %s", err)
+			return nil
+		}
+		return remote
+	}
 }
 
 func (proxy *ProxyHttpServer) websocketHandshake(ctx *ProxyCtx, req *http.Request, targetSiteConn io.ReadWriter, clientConn io.ReadWriter) error {
