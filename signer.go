@@ -11,10 +11,11 @@ import (
 	"crypto/x509/pkix"
 	"fmt"
 	"math/big"
-	"math/rand"
 	"net"
 	"runtime"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -36,9 +37,18 @@ func hashSortedBigInt(lst []string) *big.Int {
 }
 
 var goproxySignerVersion = ":goroxy1"
+var hostMap sync.Map //map[string]*tls.Certificate
 
 func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err error) {
 	var x509ca *x509.Certificate
+
+	cacheKey := strings.Join(hosts, ":")
+	cachedCert, ok := hostMap.Load(cacheKey)
+
+	if ok {
+		cert = cachedCert.(*tls.Certificate)
+		return
+	}
 
 	// Use the provided ca and not the global GoproxyCa for certificate generation.
 	if x509ca, err = x509.ParseCertificate(ca.Certificate[0]); err != nil {
@@ -49,8 +59,9 @@ func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err er
 	if err != nil {
 		panic(err)
 	}
-
-	serial := big.NewInt(rand.Int63())
+	hash := hashSorted(append(hosts, goproxySignerVersion, ":"+runtime.Version()))
+	serial := new(big.Int)
+	serial.SetBytes(hash)
 	template := x509.Certificate{
 		// TODO(elazar): instead of this ugly hack, just encode the certificate and hash the binary form.
 		SerialNumber: serial,
@@ -74,7 +85,6 @@ func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err er
 		}
 	}
 
-	hash := hashSorted(append(hosts, goproxySignerVersion, ":"+runtime.Version()))
 	var csprng CounterEncryptorRand
 	if csprng, err = NewCounterEncryptorRandFromKey(ca.PrivateKey, hash); err != nil {
 		return
@@ -98,13 +108,13 @@ func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err er
 	if derBytes, err = x509.CreateCertificate(&csprng, &template, x509ca, certpriv.Public(), ca.PrivateKey); err != nil {
 		return
 	}
-	return &tls.Certificate{
+	tlsCert := &tls.Certificate{
 		Certificate: [][]byte{derBytes, ca.Certificate[0]},
 		PrivateKey:  certpriv,
-	}, nil
-}
+	}
 
-func init() {
-	// Avoid deterministic random numbers
-	rand.Seed(time.Now().UnixNano())
+	// Cache the certificate for later.
+	hostMap.Store(cacheKey, tlsCert)
+
+	return tlsCert, nil
 }
