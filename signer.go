@@ -14,8 +14,9 @@ import (
 	"net"
 	"runtime"
 	"sort"
-	"time"
+	"strings"
 	"sync"
+	"time"
 )
 
 func hashSorted(lst []string) []byte {
@@ -41,12 +42,8 @@ var hostMap sync.Map //map[string]*tls.Certificate
 func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err error) {
 	var x509ca *x509.Certificate
 
-	// FIXME: There is a bug here. If hosts[] is ever more than one element long, there will be potential for host mismatches.
-	if len(hosts) == 0 {
-		return
-	}
-
-	cachedCert, ok := hostMap.Load(hosts[0])
+	cacheKey := strings.Join(hosts, ":")
+	cachedCert, ok := hostMap.Load(cacheKey)
 
 	if ok {
 		cert = cachedCert.(*tls.Certificate)
@@ -117,9 +114,7 @@ func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err er
 	}
 
 	// Cache the certificate for later.
-	for _, h := range hosts {
-		hostMap.Store(h, tlsCert)
-	}
+	hostMap.Store(cacheKey, tlsCert)
 
 	return tlsCert, nil
 }
