@@ -283,7 +283,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				resp.Header.Del("Content-Length")
 				resp.Header.Set("Transfer-Encoding", "chunked")
 				// Force connection close otherwise chrome will keep CONNECT tunnel open forever
-				//	resp.Header.Set("Connection", "close")
+				resp.Header.Set("Connection", "close")
 				if err := resp.Header.Write(rawClientTls); err != nil {
 					ctx.Warnf("Cannot write TLS response header from mitm'd client: %v", err)
 					return
@@ -293,9 +293,11 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 					return
 				}
 				chunked := newChunkedWriter(rawClientTls)
-				if _, err := io.Copy(chunked, resp.Body); err != nil {
-					ctx.Warnf("Cannot write TLS response body from mitm'd client: %v", err)
-					return
+				var written int64 = 1
+				for written > 0 {
+					written, _ = io.Copy(chunked, resp.Body)
+					//ctx.Warnf("Cannot write TLS response body from mitm'd client: %v", err)
+					//return
 				}
 				if err := chunked.Close(); err != nil {
 					ctx.Warnf("Cannot write TLS chunked EOF from mitm'd client: %v", err)
