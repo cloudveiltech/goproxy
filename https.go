@@ -176,7 +176,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 		// still handling the request even after hijacking the connection. Those HTTP CONNECT
 		// request can take forever, and the server will be stuck when "closed".
 		// TODO: Allow Server.Close() mechanism to shut down this connection as nicely as possible
-		tlsConfig := defaultTLSConfig
+		tlsConfig := getDefaultTlsConfig()
 		if todo.TLSConfig != nil {
 			var err error
 			tlsConfig, err = todo.TLSConfig(host, ctx)
@@ -283,7 +283,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				resp.Header.Del("Content-Length")
 				resp.Header.Set("Transfer-Encoding", "chunked")
 				// Force connection close otherwise chrome will keep CONNECT tunnel open forever
-				resp.Header.Set("Connection", "close")
+				//	resp.Header.Set("Connection", "close")
 				if err := resp.Header.Write(rawClientTls); err != nil {
 					ctx.Warnf("Cannot write TLS response header from mitm'd client: %v", err)
 					return
@@ -293,11 +293,9 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 					return
 				}
 				chunked := newChunkedWriter(rawClientTls)
-				var written int64 = 1
-				for written > 0 {
-					written, _ = io.Copy(chunked, resp.Body)
-					//ctx.Warnf("Cannot write TLS response body from mitm'd client: %v", err)
-					//return
+				if _, err := io.Copy(chunked, resp.Body); err != nil {
+					ctx.Warnf("Cannot write TLS response body from mitm'd client: %v", err)
+					return
 				}
 				if err := chunked.Close(); err != nil {
 					ctx.Warnf("Cannot write TLS chunked EOF from mitm'd client: %v", err)
@@ -458,7 +456,7 @@ func TLSConfigFromCA(ca *tls.Certificate) func(host string, ctx *ProxyCtx) (*tls
 		var cert *tls.Certificate
 
 		hostname := stripPort(host)
-		config := *defaultTLSConfig
+		config := getDefaultTlsConfig()
 		ctx.Logf("signing for %s", stripPort(host))
 
 		genCert := func() (*tls.Certificate, error) {
@@ -476,6 +474,6 @@ func TLSConfigFromCA(ca *tls.Certificate) func(host string, ctx *ProxyCtx) (*tls
 		}
 
 		config.Certificates = append(config.Certificates, *cert)
-		return &config, nil
+		return config, nil
 	}
 }
