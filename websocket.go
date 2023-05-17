@@ -2,7 +2,6 @@ package goproxy
 
 import (
 	"bufio"
-	"crypto/tls"
 	"io"
 	"log"
 	"net"
@@ -10,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	tls "github.com/refraction-networking/utls"
 )
 
 func headerContains(header http.Header, name string, value string) bool {
@@ -146,7 +147,7 @@ func (proxy *ProxyHttpServer) websocketHandshake(ctx *ProxyCtx, req *http.Reques
 	}
 
 	// Run response through handlers
-	resp = proxy.filterResponse(resp, ctx)
+	//resp = proxy.filterResponse(resp, ctx)
 
 	// Proxy handshake back to client
 	err = resp.Write(clientConn)

@@ -2,10 +2,10 @@ package goproxy
 
 import (
 	"bufio"
-	"crypto/tls"
 	"errors"
 	"io"
 	"io/ioutil"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	tls "github.com/refraction-networking/utls"
 )
 
 type ConnectActionLiteral int
@@ -176,7 +178,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 		// still handling the request even after hijacking the connection. Those HTTP CONNECT
 		// request can take forever, and the server will be stuck when "closed".
 		// TODO: Allow Server.Close() mechanism to shut down this connection as nicely as possible
-		tlsConfig := getDefaultTlsConfig()
+		tlsConfig := defaultTLSConfig
 		if todo.TLSConfig != nil {
 			var err error
 			tlsConfig, err = todo.TLSConfig(host, ctx)
@@ -188,18 +190,28 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 
 		go func() {
 			//TODO: cache connections to the remote website
-			tlsConfig.PreferServerCipherSuites = true
 			tlsConfig.Renegotiation = tls.RenegotiateFreelyAsClient
 			tlsConfig.NextProtos = []string{"h2", "http/1.1"}
-			remote, err := tls.Dial("tcp", r.Host, tlsConfig)
+			tcpConn, err := net.Dial("tcp", r.Host)
 			if err != nil {
+				httpError(proxyClient, ctx, err)
 				return
 			}
+
+			remote := tls.UClient(tcpConn, tlsConfig, tls.HelloChrome_106_Shuffle)
+			err = remote.Handshake()
+			if err != nil {
+				log.Printf("Cannot handshake: %s %v", r.Host, err)
+				httpError(proxyClient, ctx, err)
+				return
+			}
+
 			if remote.ConnectionState().NegotiatedProtocol != "h2" {
 				tlsConfig.NextProtos = []string{"http/1.1"}
 			} else {
 				tlsConfig.NextProtos = []string{"h2", "http/1.1"}
 			}
+
 			rawClientTls := tls.Server(proxyClient, tlsConfig)
 			if err := rawClientTls.Handshake(); err != nil {
 				ctx.Warnf("Cannot handshake client %v %v", r.Host, err)
@@ -218,8 +230,8 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				ctx.Warnf("Fail negotiate http2, switching to http/1.1")
 				tlsConfig.NextProtos = []string{"http/1.1"}
 			}
-			//remote.Close()
 
+			defer remote.Close()
 			defer rawClientTls.Close()
 			clientTlsReader := bufio.NewReader(rawClientTls)
 			for !isEof(clientTlsReader) {
@@ -293,9 +305,11 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 					return
 				}
 				chunked := newChunkedWriter(rawClientTls)
-				if _, err := io.Copy(chunked, resp.Body); err != nil {
-					ctx.Warnf("Cannot write TLS response body from mitm'd client: %v", err)
-					return
+				var written int64 = 1
+				for written > 0 {
+					written, _ = io.Copy(chunked, resp.Body)
+					//ctx.Warnf("Cannot write TLS response body from mitm'd client: %v", err)
+					//return
 				}
 				if err := chunked.Close(); err != nil {
 					ctx.Warnf("Cannot write TLS chunked EOF from mitm'd client: %v", err)
@@ -415,7 +429,7 @@ func (proxy *ProxyHttpServer) NewConnectDialToProxyWithHandler(https_proxy strin
 			if err != nil {
 				return nil, err
 			}
-			c = tls.Client(c, proxy.Tr.TLSClientConfig)
+			c = tls.Client(c, defaultTLSConfig)
 			connectReq := &http.Request{
 				Method: "CONNECT",
 				URL:    &url.URL{Opaque: addr},
@@ -456,7 +470,7 @@ func TLSConfigFromCA(ca *tls.Certificate) func(host string, ctx *ProxyCtx) (*tls
 		var cert *tls.Certificate
 
 		hostname := stripPort(host)
-		config := getDefaultTlsConfig()
+		config := *defaultTLSConfig
 		ctx.Logf("signing for %s", stripPort(host))
 
 		genCert := func() (*tls.Certificate, error) {
@@ -473,7 +487,8 @@ func TLSConfigFromCA(ca *tls.Certificate) func(host string, ctx *ProxyCtx) (*tls
 			return nil, err
 		}
 
+		config.ServerName = hostname
 		config.Certificates = append(config.Certificates, *cert)
-		return config, nil
+		return &config, nil
 	}
 }

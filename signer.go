@@ -6,7 +6,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/sha1"
-	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
@@ -16,6 +15,8 @@ import (
 	"runtime"
 	"sort"
 	"time"
+
+	tls "github.com/refraction-networking/utls"
 )
 
 func hashSorted(lst []string) []byte {
@@ -44,11 +45,11 @@ func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err er
 	if x509ca, err = x509.ParseCertificate(ca.Certificate[0]); err != nil {
 		return
 	}
-	start := time.Unix(0, 0)
-	end, err := time.Parse("2006-01-02", "2049-12-31")
+	start := time.Now() //time.Unix(0, 0)
+	/*end, err :=  time.Parse("2006-01-02", "2049-12-31")
 	if err != nil {
 		panic(err)
-	}
+	}*/
 
 	serial := big.NewInt(rand.Int63())
 	template := x509.Certificate{
@@ -59,7 +60,7 @@ func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err er
 			Organization: []string{"GoProxy untrusted MITM proxy Inc"},
 		},
 		NotBefore: start,
-		NotAfter:  end,
+		NotAfter:  start.Add(time.Hour * 24 * 365),
 
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},

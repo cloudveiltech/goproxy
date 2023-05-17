@@ -1,8 +1,9 @@
 package goproxy
 
 import (
-	"crypto/tls"
 	"crypto/x509"
+
+	tls "github.com/refraction-networking/utls"
 )
 
 func init() {
@@ -17,12 +18,8 @@ func init() {
 
 var tlsClientSkipVerify = &tls.Config{InsecureSkipVerify: true}
 
-func getDefaultTlsConfig() *tls.Config {
-	return &tls.Config{
-		InsecureSkipVerify: true,
-		NextProtos:         []string{"http/1.1", "h2"},
-		Renegotiation:      tls.RenegotiateFreelyAsClient,
-	}
+var defaultTLSConfig = &tls.Config{
+	InsecureSkipVerify: true,
 }
 
 var CA_CERT = []byte(`-----BEGIN CERTIFICATE-----

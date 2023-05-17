@@ -2,7 +2,6 @@ package goproxy
 
 import (
 	"bufio"
-	"crypto/tls"
 	"io"
 	"log"
 	"net"
@@ -10,6 +9,8 @@ import (
 	"os"
 	"regexp"
 	"sync/atomic"
+
+	tls "github.com/refraction-networking/utls"
 )
 
 // The basic proxy type. Implements http.Handler.
@@ -23,7 +24,7 @@ type ProxyHttpServer struct {
 	Verbose         bool
 	Logger          Logger
 	NonproxyHandler http.Handler
-	Http2Handler    func(r *http.Request, rawClientTls *tls.Conn, remote *tls.Conn) bool
+	Http2Handler    func(r *http.Request, rawClientTls *tls.Conn, remote *tls.UConn) bool
 	reqHandlers     []ReqHandler
 	respHandlers    []RespHandler
 	httpsHandlers   []HttpsHandler
@@ -170,7 +171,7 @@ func NewProxyHttpServer() *ProxyHttpServer {
 		NonproxyHandler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			http.Error(w, "This is a proxy server. Does not respond to non-proxy requests.", 500)
 		}),
-		Tr: &http.Transport{TLSClientConfig: tlsClientSkipVerify, Proxy: http.ProxyFromEnvironment},
+		Tr: &http.Transport{Proxy: http.ProxyFromEnvironment},
 	}
 	proxy.ConnectDial = dialerFromEnv(&proxy)
 

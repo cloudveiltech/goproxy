@@ -1,9 +1,10 @@
 package goproxy
 
 import (
-	"crypto/tls"
 	"net/http"
 	"regexp"
+
+	tls "github.com/refraction-networking/utls"
 )
 
 // ProxyCtx is the Proxy context, contains useful information about every request. It is passed to
