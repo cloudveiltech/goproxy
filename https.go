@@ -198,7 +198,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				return
 			}
 
-			remote := tls.UClient(tcpConn, tlsConfig, tls.HelloChrome_106_Shuffle)
+			remote := tls.UClient(tcpConn, tlsConfig, tls.HelloChrome_102)
 			err = remote.Handshake()
 			if err != nil {
 				log.Printf("Cannot handshake: %s %v", r.Host, err)
@@ -231,12 +231,26 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				tlsConfig.NextProtos = []string{"http/1.1"}
 			}
 
-			defer remote.Close()
-			defer rawClientTls.Close()
+			//	defer remote.Close()
+			//	defer rawClientTls.Close()
 			clientTlsReader := bufio.NewReader(rawClientTls)
 			for !isEof(clientTlsReader) {
 				req, err := http.ReadRequest(clientTlsReader)
+				if err != nil {
+					ctx.Warnf("error read request %v", err)
+					return
+				}
+				if strings.Contains(req.Method, "RDG") { //remote desktop gateway
+					cp := func(dst io.Writer, src io.Reader) {
+						io.Copy(dst, src)
+					}
 
+					req.Write(remote)
+					// Start proxying websocket data
+					go cp(rawClientTls, remote)
+					cp(remote, rawClientTls)
+					return
+				}
 				var ctx = &ProxyCtx{Req: req, Session: atomic.AddInt64(&proxy.sess, 1), proxy: proxy, UserData: ctx.UserData}
 				if err != nil && err != io.EOF {
 					return
@@ -252,18 +266,22 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				if !httpsRegexp.MatchString(req.URL.String()) {
 					req.URL, err = url.Parse("https://" + r.Host + req.URL.String())
 				}
-
+				if isWebSocketRequest(req) {
+					ctx.Logf("Request looks like websocket upgrade.")
+					err := req.Write(remote)
+					if err != nil {
+						httpError(proxyClient, ctx, err)
+						return
+					}
+					proxy.serveWebsocketTLS(ctx, w, req, tlsConfig, rawClientTls)
+					return
+				}
 				// Bug fix which goproxy fails to provide request
 				// information URL in the context when does HTTPS MITM
 				ctx.Req = req
 
 				req, resp := proxy.filterRequest(req, ctx)
 				if resp == nil {
-					if isWebSocketRequest(req) {
-						ctx.Logf("Request looks like websocket upgrade.")
-						proxy.serveWebsocketTLS(ctx, w, req, tlsConfig, rawClientTls)
-						return
-					}
 					if err != nil {
 						ctx.Warnf("Illegal URL %s", "https://"+r.Host+req.URL.Path)
 						return
