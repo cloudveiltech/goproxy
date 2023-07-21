@@ -273,7 +273,10 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 						httpError(proxyClient, ctx, err)
 						return
 					}
-					proxy.serveWebsocketTLS(ctx, w, req, tlsConfig, rawClientTls)
+					io.Copy(rawClientTls, remote)
+					go func() {
+						io.Copy(remote, rawClientTls)
+					}()
 					return
 				}
 				// Bug fix which goproxy fails to provide request
