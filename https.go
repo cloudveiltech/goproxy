@@ -192,7 +192,13 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 			//TODO: cache connections to the remote website
 			tlsConfig.Renegotiation = tls.RenegotiateFreelyAsClient
 			tlsConfig.NextProtos = []string{"h2", "http/1.1"}
-			tcpConn, err := net.Dial("tcp", r.Host)
+			var tcpConn net.Conn
+			var err error
+			if proxy.ConnectDial != nil {
+				tcpConn, err = proxy.ConnectDial("tcp", r.Host)
+			} else {
+				tcpConn, err = net.Dial("tcp", r.Host)
+			}
 			if err != nil {
 				httpError(proxyClient, ctx, err)
 				return
