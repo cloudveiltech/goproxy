@@ -197,7 +197,9 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 			host := r.Host
 			if proxy.Tr.Proxy != nil {
 				u, _ := proxy.Tr.Proxy(r)
-				host = u.Host
+				if u != nil {
+					host = u.Host
+				}
 			}
 			tcpConn, err = net.Dial("tcp", host)
 
