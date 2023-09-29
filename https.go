@@ -194,11 +194,13 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 			tlsConfig.NextProtos = []string{"h2", "http/1.1"}
 			var tcpConn net.Conn
 			var err error
-			if proxy.ConnectDial != nil {
-				tcpConn, err = proxy.ConnectDial("tcp", r.Host)
-			} else {
-				tcpConn, err = net.Dial("tcp", r.Host)
+			host := r.Host
+			if proxy.Tr.Proxy != nil {
+				u, _ := proxy.Tr.Proxy(r)
+				host = u.Host
 			}
+			tcpConn, err = net.Dial("tcp", host)
+
 			if err != nil {
 				httpError(proxyClient, ctx, err)
 				return
