@@ -208,20 +208,26 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				return
 			}
 
-			remote := tls.UClient(tcpConn, tlsConfig, tls.HelloChrome_102)
-			err = remote.Handshake()
-			if err != nil {
-				log.Printf("Cannot handshake: %s %v", r.Host, err)
-				httpError(proxyClient, ctx, err)
-				return
-			}
-
-			if remote.ConnectionState().NegotiatedProtocol != "h2" {
+			var remote io.ReadWriter
+			if host != r.Host {
 				tlsConfig.NextProtos = []string{"http/1.1"}
+				remote = tcpConn
 			} else {
-				tlsConfig.NextProtos = []string{"h2", "http/1.1"}
-			}
+				remoteTls := tls.UClient(tcpConn, tlsConfig, tls.HelloChrome_102)
+				err = remoteTls.Handshake()
+				if err != nil {
+					log.Printf("Cannot handshake: %s %v", r.Host, err)
+					httpError(proxyClient, ctx, err)
+					return
+				}
 
+				if remoteTls.ConnectionState().NegotiatedProtocol != "h2" {
+					tlsConfig.NextProtos = []string{"http/1.1"}
+				} else {
+					tlsConfig.NextProtos = []string{"h2", "http/1.1"}
+				}
+				remote = remoteTls
+			}
 			rawClientTls := tls.Server(proxyClient, tlsConfig)
 			if err := rawClientTls.Handshake(); err != nil {
 				ctx.Warnf("Cannot handshake client %v %v", r.Host, err)
@@ -230,7 +236,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 
 			if rawClientTls.ConnectionState().NegotiatedProtocol == "h2" {
 				if proxy.Http2Handler != nil {
-					if proxy.Http2Handler(r, rawClientTls, remote) {
+					if proxy.Http2Handler(r, rawClientTls, remote.(*tls.UConn)) {
 						return
 					} else {
 						ctx.Warnf("Fail negotiate http2, switching to http/1.1")
