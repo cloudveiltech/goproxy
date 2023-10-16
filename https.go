@@ -208,7 +208,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				return
 			}
 
-			var remote io.ReadWriter
+			var remote io.ReadWriteCloser
 			if host != r.Host {
 				tlsConfig.NextProtos = []string{"http/1.1"}
 				remote = tcpConn
@@ -309,6 +309,9 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 					resp, err = ctx.RoundTrip(req)
 					if err != nil {
 						ctx.Warnf("Cannot read TLS response from mitm'd server %v", err)
+						io.WriteString(rawClientTls, "HTTP/1.1 204 No Content\r\n\r\n")
+						rawClientTls.Close()
+						remote.Close()
 						return
 					}
 					ctx.Logf("resp %v", resp.Status)
