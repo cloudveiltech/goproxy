@@ -110,7 +110,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 			return
 		}
 		ctx.Logf("Accepting CONNECT to %s", host)
-		//proxyClient.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+		proxyClient.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 
 		targetTCP, targetOK := targetSiteCon.(halfClosable)
 		proxyClientTCP, clientOK := proxyClient.(halfClosable)
@@ -309,7 +309,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 					resp, err = ctx.RoundTrip(req)
 					if err != nil {
 						ctx.Warnf("Cannot read TLS response from mitm'd server %v", err)
-						io.WriteString(rawClientTls, "HTTP/1.1 204 No Content\r\n\r\n")
+						io.WriteString(rawClientTls, "HTTP/1.1 500  Internal Server Error\r\n\r\n")
 						rawClientTls.Close()
 						remote.Close()
 						return
