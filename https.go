@@ -208,6 +208,27 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				tlsConfig.NextProtos = []string{"http/1.1"}
 			}
 
+			tcpConn, err = net.Dial("tcp", host)
+			if err != nil {
+				httpError(proxyClient, ctx, err)
+				return
+			}
+			var remote io.ReadWriteCloser
+			remoteTls := tls.UClient(tcpConn, tlsConfig, tls.HelloRandomizedNoALPN)
+			err = remoteTls.Handshake()
+			if err != nil {
+				log.Printf("Cannot handshake: %s %v", r.Host, err)
+				httpError(proxyClient, ctx, err)
+				return
+			}
+
+			if remoteTls.ConnectionState().NegotiatedProtocol != "h2" {
+				tlsConfig.NextProtos = []string{"http/1.1"}
+			} else {
+				tlsConfig.NextProtos = []string{"h2", "http/1.1"}
+			}
+			remote = remoteTls
+
 			rawClientTls := tls.Server(proxyClient, tlsConfig)
 			if err := rawClientTls.Handshake(); err != nil {
 				ctx.Warnf("Cannot handshake client %v %v", r.Host, err)
@@ -220,21 +241,6 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				tlsConfig.NextProtos = []string{"h2", "http/1.1"}
 			}
 
-			tcpConn, err = net.Dial("tcp", host)
-			if err != nil {
-				httpError(proxyClient, ctx, err)
-				return
-			}
-			var remote io.ReadWriteCloser
-			remoteTls := tls.UClient(tcpConn, tlsConfig, tls.HelloChrome_102)
-			err = remoteTls.Handshake()
-			if err != nil {
-				log.Printf("Cannot handshake: %s %v", r.Host, err)
-				httpError(proxyClient, ctx, err)
-				return
-			}
-			remote = remoteTls
-
 			if rawClientTls.ConnectionState().NegotiatedProtocol == "h2" {
 				if proxy.Http2Handler != nil {
 					if proxy.Http2Handler(r, rawClientTls, remote.(*tls.UConn)) {
@@ -246,7 +252,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 			} else {
 				ctx.Warnf("Fail negotiate http2, switching to http/1.1")
 				tlsConfig.NextProtos = []string{"http/1.1"}
-				roundTripper, err = NewUTLSRoundTripper("hellochrome_auto", tlsConfig, proxyURL)
+				roundTripper, err = NewUTLSRoundTripper("hellorandomizednoalpn", tlsConfig, proxyURL)
 				if err != nil {
 					log.Printf("Cannot connect: %s %v", r.Host, err)
 					httpError(proxyClient, ctx, err)
