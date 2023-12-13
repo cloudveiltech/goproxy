@@ -246,7 +246,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 			} else {
 				ctx.Warnf("Fail negotiate http2, switching to http/1.1")
 				tlsConfig.NextProtos = []string{"http/1.1"}
-				roundTripper, err = NewUTLSRoundTripper("hellochrome_auto", tlsConfig, proxyURL)
+				roundTripper, err = NewUTLSRoundTripper("hellorandomizednoalpn", tlsConfig, proxyURL)
 				if err != nil {
 					log.Printf("Cannot connect: %s %v", r.Host, err)
 					httpError(proxyClient, ctx, err)
