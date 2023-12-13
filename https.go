@@ -194,45 +194,46 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 			tlsConfig.NextProtos = []string{"h2", "http/1.1"}
 			var tcpConn net.Conn
 			var err error
+			var proxyURL *url.URL
+			var roundTripper http.RoundTripper
 			host := r.Host
+
 			if proxy.Tr.Proxy != nil {
-				u, _ := proxy.Tr.Proxy(r)
-				if u != nil {
-					host = u.Host
+				proxyURL, _ = proxy.Tr.Proxy(r)
+				if proxyURL != nil {
+					host = proxyURL.Host
 				}
 			}
-			tcpConn, err = net.Dial("tcp", host)
-
-			if err != nil {
-				httpError(proxyClient, ctx, err)
-				return
-			}
-
-			var remote io.ReadWriteCloser
 			if host != r.Host {
 				tlsConfig.NextProtos = []string{"http/1.1"}
-				remote = tcpConn
-			} else {
-				remoteTls := tls.UClient(tcpConn, tlsConfig, tls.HelloChrome_102)
-				err = remoteTls.Handshake()
-				if err != nil {
-					log.Printf("Cannot handshake: %s %v", r.Host, err)
-					httpError(proxyClient, ctx, err)
-					return
-				}
-
-				if remoteTls.ConnectionState().NegotiatedProtocol != "h2" {
-					tlsConfig.NextProtos = []string{"http/1.1"}
-				} else {
-					tlsConfig.NextProtos = []string{"h2", "http/1.1"}
-				}
-				remote = remoteTls
 			}
+
 			rawClientTls := tls.Server(proxyClient, tlsConfig)
 			if err := rawClientTls.Handshake(); err != nil {
 				ctx.Warnf("Cannot handshake client %v %v", r.Host, err)
 				return
 			}
+
+			if rawClientTls.ConnectionState().NegotiatedProtocol != "h2" {
+				tlsConfig.NextProtos = []string{"http/1.1"}
+			} else {
+				tlsConfig.NextProtos = []string{"h2", "http/1.1"}
+			}
+
+			tcpConn, err = net.Dial("tcp", host)
+			if err != nil {
+				httpError(proxyClient, ctx, err)
+				return
+			}
+			var remote io.ReadWriteCloser
+			remoteTls := tls.UClient(tcpConn, tlsConfig, tls.HelloChrome_102)
+			err = remoteTls.Handshake()
+			if err != nil {
+				log.Printf("Cannot handshake: %s %v", r.Host, err)
+				httpError(proxyClient, ctx, err)
+				return
+			}
+			remote = remoteTls
 
 			if rawClientTls.ConnectionState().NegotiatedProtocol == "h2" {
 				if proxy.Http2Handler != nil {
@@ -245,6 +246,12 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 			} else {
 				ctx.Warnf("Fail negotiate http2, switching to http/1.1")
 				tlsConfig.NextProtos = []string{"http/1.1"}
+				roundTripper, err = NewUTLSRoundTripper("hellochrome_auto", tlsConfig, proxyURL)
+				if err != nil {
+					log.Printf("Cannot connect: %s %v", r.Host, err)
+					httpError(proxyClient, ctx, err)
+					return
+				}
 			}
 
 			//	defer remote.Close()
@@ -306,7 +313,11 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 						return
 					}
 					//	removeProxyHeaders(ctx, req)
-					resp, err = ctx.RoundTrip(req)
+					if roundTripper == nil {
+						resp, err = ctx.RoundTrip(req)
+					} else {
+						resp, err = roundTripper.RoundTrip(req)
+					}
 					if err != nil {
 						ctx.Warnf("Cannot read TLS response from mitm'd server %v", err)
 						io.WriteString(rawClientTls, "HTTP/1.1 500  Internal Server Error\r\n\r\n")
