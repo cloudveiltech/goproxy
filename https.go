@@ -540,7 +540,7 @@ func TLSConfigFromCA(ca *tls.Certificate) func(host string, ctx *ProxyCtx) (*tls
 		}
 
 		if err != nil {
-			ctx.Warnf("Cannot sign host certificate with provided CA: %s", err)
+			ctx.Warnf("Cannot sign host certificate, provided CA: %s", err)
 			return nil, err
 		}
 
