@@ -213,21 +213,23 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				httpError(proxyClient, ctx, err)
 				return
 			}
-			var remote io.ReadWriteCloser
-			remoteTls := tls.UClient(tcpConn, tlsConfig, tls.HelloRandomizedNoALPN)
-			err = remoteTls.Handshake()
-			if err != nil {
-				log.Printf("Cannot handshake: %s %v", r.Host, err)
-				httpError(proxyClient, ctx, err)
-				return
-			}
+			var remote io.ReadWriteCloser = tcpConn
+			if host == r.Host {
+				remoteTls := tls.UClient(tcpConn, tlsConfig, tls.HelloRandomizedNoALPN)
+				err = remoteTls.Handshake()
+				if err != nil {
+					log.Printf("Cannot handshake: %s %v", r.Host, err)
+					httpError(proxyClient, ctx, err)
+					return
+				}
 
-			if remoteTls.ConnectionState().NegotiatedProtocol != "h2" {
-				tlsConfig.NextProtos = []string{"http/1.1"}
-			} else {
-				tlsConfig.NextProtos = []string{"h2", "http/1.1"}
+				if remoteTls.ConnectionState().NegotiatedProtocol != "h2" {
+					tlsConfig.NextProtos = []string{"http/1.1"}
+				} else {
+					tlsConfig.NextProtos = []string{"h2", "http/1.1"}
+				}
+				remote = remoteTls
 			}
-			remote = remoteTls
 
 			rawClientTls := tls.Server(proxyClient, tlsConfig)
 			if err := rawClientTls.Handshake(); err != nil {
