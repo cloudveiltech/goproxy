@@ -3,6 +3,7 @@ package goproxy
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -210,16 +211,21 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 
 			tcpConn, err = net.Dial("tcp", host)
 			if err != nil {
-				httpError(proxyClient, ctx, err)
+				log.Printf("Cannot dial: %s %v", r.Host, err)
 				return
 			}
+
 			var remote io.ReadWriteCloser = tcpConn
 			if host == r.Host {
-				remoteTls := tls.UClient(tcpConn, tlsConfig, tls.HelloRandomizedNoALPN)
+				remoteTls := tls.UClient(tcpConn, tlsConfig, tls.HelloChrome_102)
 				err = remoteTls.Handshake()
 				if err != nil {
+					tlsConfig.NextProtos = []string{"http/1.1"}
+					rawClientTls := tls.Server(proxyClient, tlsConfig)
+					rawClientTls.Handshake()
+					rawClientTls.ConnectionState()
 					log.Printf("Cannot handshake: %s %v", r.Host, err)
-					httpError(proxyClient, ctx, err)
+					httpError(rawClientTls, ctx, err)
 					return
 				}
 
@@ -253,11 +259,13 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				}
 			} else {
 				ctx.Warnf("Fail negotiate http2, switching to http/1.1")
-				tlsConfig.NextProtos = []string{"http/1.1"}
-				roundTripper, err = NewUTLSRoundTripper("hellorandomizednoalpn", tlsConfig, proxyURL)
+				tlsConfig.NextProtos = []string{"http/1.1", "h2"}
+				tlsConfig.MinVersion = tls.VersionTLS12
+				tlsConfig.InsecureSkipVerify = true
+				roundTripper, err = NewUTLSRoundTripper("hellorandomizednoalpn_maxtls", tlsConfig, proxyURL)
 				if err != nil {
 					log.Printf("Cannot connect: %s %v", r.Host, err)
-					httpError(proxyClient, ctx, err)
+					httpError(rawClientTls, ctx, err)
 					return
 				}
 			}
@@ -301,7 +309,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 					ctx.Logf("Request looks like websocket upgrade.")
 					err := req.Write(remote)
 					if err != nil {
-						httpError(proxyClient, ctx, err)
+						httpError(rawClientTls, ctx, err)
 						return
 					}
 					io.Copy(rawClientTls, remote)
@@ -328,7 +336,8 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 					}
 					if err != nil {
 						ctx.Warnf("Cannot read TLS response from mitm'd server %v", err)
-						io.WriteString(rawClientTls, "HTTP/1.1 500  Internal Server Error\r\n\r\n")
+
+						httpError(rawClientTls, ctx, err)
 						rawClientTls.Close()
 						remote.Close()
 						return
@@ -395,7 +404,8 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 }
 
 func httpError(w io.WriteCloser, ctx *ProxyCtx, err error) {
-	if _, err := io.WriteString(w, "HTTP/1.1 502 Bad Gateway\r\n\r\n"); err != nil {
+	msg := fmt.Sprintf("HTTP/1.1 500 Server error\r\n\r\n%v\r\n", err)
+	if _, err := io.WriteString(w, msg); err != nil {
 		ctx.Warnf("Error responding to client: %s", err)
 	}
 	if err := w.Close(); err != nil {

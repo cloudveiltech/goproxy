@@ -163,6 +163,7 @@ func dialUTLS(network, addr string, cfg *utls.Config, clientHelloID *utls.Client
 	if err != nil {
 		return nil, err
 	}
+	cfg.MaxVersion = utls.VersionTLS13
 	uconn := utls.UClient(conn, cfg, *clientHelloID)
 	if cfg == nil || cfg.ServerName == "" {
 		serverName, _, err := net.SplitHostPort(addr)
@@ -345,29 +346,38 @@ func makeRoundTripper(url *url.URL, clientHelloID *utls.ClientHelloID, cfg *utls
 var clientHelloIDMap = map[string]*utls.ClientHelloID{
 	// No HelloCustom: not useful for external configuration.
 	// No HelloRandomized: doesn't negotiate consistent ALPN.
-	"none":                  nil, // special case: disable uTLS
-	"hellogolang":           nil, // special case: disable uTLS
-	"hellorandomizedalpn":   &utls.HelloRandomizedALPN,
-	"hellorandomizednoalpn": &utls.HelloRandomizedNoALPN,
-	"hellofirefox_auto":     &utls.HelloFirefox_Auto,
-	"hellofirefox_55":       &utls.HelloFirefox_55,
-	"hellofirefox_56":       &utls.HelloFirefox_56,
-	"hellofirefox_63":       &utls.HelloFirefox_63,
-	"hellofirefox_65":       &utls.HelloFirefox_65,
-	"hellochrome_auto":      &utls.HelloChrome_Auto,
-	"hellochrome_58":        &utls.HelloChrome_58,
-	"hellochrome_62":        &utls.HelloChrome_62,
-	"hellochrome_70":        &utls.HelloChrome_70,
-	"hellochrome_72":        &utls.HelloChrome_72,
-	"hellochrome_83":        &utls.HelloChrome_83,
-	"helloios_auto":         &utls.HelloIOS_Auto,
-	"helloios_11_1":         &utls.HelloIOS_11_1,
-	"helloios_12_1":         &utls.HelloIOS_12_1,
+	"none":                         nil, // special case: disable uTLS
+	"hellogolang":                  nil, // special case: disable uTLS
+	"hellorandomizedalpn":          &utls.HelloRandomizedALPN,
+	"hellorandomizednoalpn":        &utls.HelloRandomizedNoALPN,
+	"hellorandomizednoalpn_maxtls": &utls.HelloRandomizedNoALPN,
+	"hellofirefox_auto":            &utls.HelloFirefox_Auto,
+	"hellofirefox_55":              &utls.HelloFirefox_55,
+	"hellofirefox_56":              &utls.HelloFirefox_56,
+	"hellofirefox_63":              &utls.HelloFirefox_63,
+	"hellofirefox_65":              &utls.HelloFirefox_65,
+	"hellochrome_auto":             &utls.HelloChrome_Auto,
+	"hellochrome_58":               &utls.HelloChrome_58,
+	"hellochrome_62":               &utls.HelloChrome_62,
+	"hellochrome_70":               &utls.HelloChrome_70,
+	"hellochrome_72":               &utls.HelloChrome_72,
+	"hellochrome_83":               &utls.HelloChrome_83,
+	"helloios_auto":                &utls.HelloIOS_Auto,
+	"helloios_11_1":                &utls.HelloIOS_11_1,
+	"helloios_12_1":                &utls.HelloIOS_12_1,
 }
 
 func NewUTLSRoundTripper(name string, cfg *utls.Config, proxyURL *url.URL) (http.RoundTripper, error) {
+
 	// Lookup is case-insensitive.
 	clientHelloID, ok := clientHelloIDMap[strings.ToLower(name)]
+	if name == "hellorandomizednoalpn_maxtls" {
+		var weights = utls.DefaultWeights
+		weights.TLSVersMax_Set_VersionTLS13 = 1
+		weights.CipherSuites_Remove_RandomCiphers = 0
+		clientHelloID.Weights = &weights
+	}
+
 	if !ok {
 		return nil, fmt.Errorf("no uTLS Client Hello ID named %q", name)
 	}

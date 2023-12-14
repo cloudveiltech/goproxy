@@ -19,7 +19,7 @@ func init() {
 var tlsClientSkipVerify = &tls.Config{InsecureSkipVerify: true}
 
 var defaultTLSConfig = &tls.Config{
-	InsecureSkipVerify: true,
+	InsecureSkipVerify: false,
 	NextProtos:         []string{"http/1.1", "h2"},
 }
 
