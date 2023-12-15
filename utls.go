@@ -341,6 +341,27 @@ func makeRoundTripper(url *url.URL, clientHelloID *utls.ClientHelloID, cfg *utls
 	}
 }
 
+func MakeHelloIDNoALPN() utls.ClientHelloID {
+	clientHelloID := utls.HelloRandomizedNoALPN
+	return PatchHelloID(clientHelloID)
+}
+
+func MakeHelloIDWithALPN() utls.ClientHelloID {
+	clientHelloID := utls.HelloRandomizedALPN
+	return PatchHelloID(clientHelloID)
+}
+
+func PatchHelloID(clientHelloID utls.ClientHelloID) utls.ClientHelloID {
+	var weights = utls.DefaultWeights
+	weights.TLSVersMax_Set_VersionTLS13 = 1
+	weights.CipherSuites_Remove_RandomCiphers = 0
+	clientHelloID.Weights = &weights
+	return clientHelloID
+}
+
+var RandomizedMaxTlsHelloIdNoALPN = MakeHelloIDNoALPN()
+var RandomizedMaxTlsHelloIdALPN = MakeHelloIDWithALPN()
+
 // When you update this map, also update the man page in doc/meek-client.1.txt.
 // https://github.com/refraction-networking/utls/blob/master/u_common.go
 var clientHelloIDMap = map[string]*utls.ClientHelloID{
@@ -350,7 +371,7 @@ var clientHelloIDMap = map[string]*utls.ClientHelloID{
 	"hellogolang":                  nil, // special case: disable uTLS
 	"hellorandomizedalpn":          &utls.HelloRandomizedALPN,
 	"hellorandomizednoalpn":        &utls.HelloRandomizedNoALPN,
-	"hellorandomizednoalpn_maxtls": &utls.HelloRandomizedNoALPN,
+	"hellorandomizednoalpn_maxtls": &RandomizedMaxTlsHelloIdNoALPN,
 	"hellofirefox_auto":            &utls.HelloFirefox_Auto,
 	"hellofirefox_55":              &utls.HelloFirefox_55,
 	"hellofirefox_56":              &utls.HelloFirefox_56,
@@ -371,13 +392,6 @@ func NewUTLSRoundTripper(name string, cfg *utls.Config, proxyURL *url.URL) (http
 
 	// Lookup is case-insensitive.
 	clientHelloID, ok := clientHelloIDMap[strings.ToLower(name)]
-	if name == "hellorandomizednoalpn_maxtls" {
-		var weights = utls.DefaultWeights
-		weights.TLSVersMax_Set_VersionTLS13 = 1
-		weights.CipherSuites_Remove_RandomCiphers = 0
-		clientHelloID.Weights = &weights
-	}
-
 	if !ok {
 		return nil, fmt.Errorf("no uTLS Client Hello ID named %q", name)
 	}

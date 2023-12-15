@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 
 	tls "github.com/refraction-networking/utls"
+	utls "github.com/refraction-networking/utls"
 )
 
 type ConnectActionLiteral int
@@ -217,7 +218,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 
 			var remote io.ReadWriteCloser = tcpConn
 			if host == r.Host {
-				remoteTls := tls.UClient(tcpConn, tlsConfig, tls.HelloChrome_102)
+				remoteTls := tls.UClient(tcpConn, tlsConfig, utls.HelloChrome_Auto)
 				err = remoteTls.Handshake()
 				if err != nil {
 					tlsConfig.NextProtos = []string{"http/1.1"}
