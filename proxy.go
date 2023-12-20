@@ -66,6 +66,14 @@ func (proxy *ProxyHttpServer) FilterResponse(respOrig *http.Response, ctx *Proxy
 	return proxy.filterResponse(respOrig, ctx)
 }
 
+func (proxy *ProxyHttpServer) ResetReqHandlers() {
+	proxy.reqHandlers = []ReqHandler{}
+}
+
+func (proxy *ProxyHttpServer) ResetRespHandlers() {
+	proxy.respHandlers = []RespHandler{}
+}
+
 func (proxy *ProxyHttpServer) filterRequest(r *http.Request, ctx *ProxyCtx) (req *http.Request, resp *http.Response) {
 	req = r
 	for _, h := range proxy.reqHandlers {
