@@ -66,7 +66,9 @@ func (proxy *ProxyHttpServer) serveWebsocket(ctx *ProxyCtx, w http.ResponseWrite
 	}
 
 	remote := dialRemote(req)
-
+	if remote == nil {
+		return
+	}
 	defer remote.Close()
 	defer client.Close()
 

@@ -219,9 +219,10 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				return
 			}
 
+			tlsConfig.NextProtos = []string{"h2", "http/1.1"}
 			rawClientTls := tls.Server(proxyClient, tlsConfig)
 			if err := rawClientTls.Handshake(); err != nil {
-				ctx.Warnf("Cannot handshake client %v %v", r.Host, err)
+				ctx.Warnf("Cannot handshake Server %v %v", r.Host, err)
 				return
 			}
 
@@ -412,9 +413,22 @@ func dialTls(host string, r *http.Request, ctx *ProxyCtx, tlsConfig *tls.Config)
 	var remote io.ReadWriteCloser = tcpConn
 	if host == r.Host {
 		clientHelloId := tls.HelloChrome_Auto
+		invalidProtos := false
+		for _, proto := range tlsConfig.NextProtos {
+			if len(proto) == 0 || []rune(proto)[0] != 'h' {
+				invalidProtos = true
+				break
+			}
+		}
+		if invalidProtos {
+			log.Printf("Invalid NextProtos detected for host %s", host)
+			tlsConfig.NextProtos = []string{"h2", "http/1.1"}
+		}
+
 		if len(tlsConfig.NextProtos) > 0 && tlsConfig.NextProtos[0] != "h2" {
 			clientHelloId = tls.HelloRandomizedNoALPN
 		}
+
 		remoteTls := tls.UClient(tcpConn, tlsConfig, clientHelloId)
 		err = remoteTls.Handshake()
 		if err != nil {
