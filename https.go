@@ -219,7 +219,6 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				return
 			}
 
-			tlsConfig.NextProtos = []string{"h2", "http/1.1"}
 			rawClientTls := tls.Server(proxyClient, tlsConfig)
 			if err := rawClientTls.Handshake(); err != nil {
 				ctx.Warnf("Cannot handshake Server %v %v", r.Host, err)
