@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 
 	tls "github.com/refraction-networking/utls"
+	utls "github.com/refraction-networking/utls"
 )
 
 type ConnectActionLiteral int
@@ -193,6 +194,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 			//TODO: cache connections to the remote website
 			tlsConfig.Renegotiation = tls.RenegotiateFreelyAsClient
 			tlsConfig.NextProtos = []string{"h2", "http/1.1"}
+			var tcpConn net.Conn
 			var err error
 			var proxyURL *url.URL
 			var roundTripper http.RoundTripper
@@ -208,36 +210,38 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				tlsConfig.NextProtos = []string{"http/1.1"}
 			}
 
-			remote := dialTls(host, r, ctx, tlsConfig)
-
-			if remote == nil {
-				tlsConfig.NextProtos = []string{"http/1.1"}
-				rawClientTls := tls.Server(proxyClient, tlsConfig)
-				rawClientTls.Handshake()
-				rawClientTls.ConnectionState()
-				httpError(rawClientTls, ctx, fmt.Errorf("Can't dial remote"))
+			tcpConn, err = net.Dial("tcp", host)
+			if err != nil {
+				log.Printf("Cannot dial: %s %v", r.Host, err)
 				return
 			}
 
-			rawClientTls := tls.Server(proxyClient, tlsConfig)
-			if err := rawClientTls.Handshake(); err != nil {
-				ctx.Warnf("Cannot handshake Server %v %v", r.Host, err)
-				return
-			}
-
-			clientHttpProtocol := rawClientTls.ConnectionState().NegotiatedProtocol
-			if clientHttpProtocol != remote.(*tls.UConn).ConnectionState().NegotiatedProtocol {
-				remote.Close()
-				tlsConfig.NextProtos = []string{clientHttpProtocol}
-				remote = dialTls(host, r, ctx, tlsConfig)
-				if remote == nil {
+			var remote io.ReadWriteCloser = tcpConn
+			if host == r.Host {
+				remoteTls := tls.UClient(tcpConn, tlsConfig, utls.HelloChrome_Auto)
+				err = remoteTls.Handshake()
+				if err != nil {
 					tlsConfig.NextProtos = []string{"http/1.1"}
 					rawClientTls := tls.Server(proxyClient, tlsConfig)
 					rawClientTls.Handshake()
 					rawClientTls.ConnectionState()
-					httpError(rawClientTls, ctx, fmt.Errorf("Can't dial remote"))
+					log.Printf("Cannot handshake: %s %v", r.Host, err)
+					httpError(rawClientTls, ctx, err)
 					return
 				}
+
+				if remoteTls.ConnectionState().NegotiatedProtocol != "h2" {
+					tlsConfig.NextProtos = []string{"http/1.1"}
+				} else {
+					tlsConfig.NextProtos = []string{"h2", "http/1.1"}
+				}
+				remote = remoteTls
+			}
+
+			rawClientTls := tls.Server(proxyClient, tlsConfig)
+			if err := rawClientTls.Handshake(); err != nil {
+				ctx.Warnf("Cannot handshake client %v %v", r.Host, err)
+				return
 			}
 
 			if rawClientTls.ConnectionState().NegotiatedProtocol != "h2" {
@@ -302,19 +306,31 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				if !httpsRegexp.MatchString(req.URL.String()) {
 					req.URL, err = url.Parse("https://" + r.Host + req.URL.String())
 				}
+
 				if isWebSocketRequest(req) {
 					ctx.Logf("Request looks like websocket upgrade.")
-					err := req.Write(remote)
+					if proxyURL != nil {
+						err = req.WriteProxy(remote)
+					} else {
+						err = req.Write(remote)
+					}
+
 					if err != nil {
 						httpError(rawClientTls, ctx, err)
 						return
 					}
+
+					go func() {
+						io.Copy(rawClientTls, remote)
+					}()
+
 					go func() {
 						io.Copy(remote, rawClientTls)
 					}()
-					io.Copy(rawClientTls, remote)
+
 					return
 				}
+
 				// Bug fix which goproxy fails to provide request
 				// information URL in the context when does HTTPS MITM
 				ctx.Req = req
@@ -341,8 +357,6 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 					}
 					ctx.Logf("resp %v", resp.Status)
 				}
-				state := remote.(*tls.UConn).ConnectionState()
-				ctx.ConnectionState = &state
 				resp = proxy.filterResponse(resp, ctx)
 				defer resp.Body.Close()
 
@@ -400,49 +414,6 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 		}
 		proxyClient.Close()
 	}
-}
-
-func dialTls(host string, r *http.Request, ctx *ProxyCtx, tlsConfig *tls.Config) io.ReadWriteCloser {
-	tcpConn, err := net.Dial("tcp", host)
-	if err != nil {
-		log.Printf("Cannot dial: %s %v", r.Host, err)
-		return nil
-	}
-
-	var remote io.ReadWriteCloser = tcpConn
-	if host == r.Host {
-		clientHelloId := tls.HelloChrome_Auto
-		invalidProtos := false
-		for _, proto := range tlsConfig.NextProtos {
-			if len(proto) == 0 || []rune(proto)[0] != 'h' {
-				invalidProtos = true
-				break
-			}
-		}
-		if invalidProtos {
-			log.Printf("Invalid NextProtos detected for host %s", host)
-			tlsConfig.NextProtos = []string{"h2", "http/1.1"}
-		}
-
-		if len(tlsConfig.NextProtos) > 0 && tlsConfig.NextProtos[0] != "h2" {
-			clientHelloId = tls.HelloRandomizedNoALPN
-		}
-
-		remoteTls := tls.UClient(tcpConn, tlsConfig, clientHelloId)
-		err = remoteTls.Handshake()
-		if err != nil {
-			log.Printf("Cannot handshake: %s %v", r.Host, err)
-			return nil
-		}
-
-		if remoteTls.ConnectionState().NegotiatedProtocol != "h2" {
-			tlsConfig.NextProtos = []string{"http/1.1"}
-		} else {
-			tlsConfig.NextProtos = []string{"h2", "http/1.1"}
-		}
-		remote = remoteTls
-	}
-	return remote
 }
 
 func httpError(w io.WriteCloser, ctx *ProxyCtx, err error) {
